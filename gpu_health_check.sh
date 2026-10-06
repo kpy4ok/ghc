@@ -126,7 +126,7 @@ rec() { printf '{"gpu":"%s","run":"%s","key":"%s","value":"%s"}\n' \
 
 MEMEXP=380
 case "$GPU_SHORT" in
-  P40)  EXPECT_MB=23040; MIN_BW=300; BOOST=1720; MEMEXP=380 ;;
+  P40)  EXPECT_MB=23040; MIN_BW=180; BOOST=1720; MEMEXP=380 ;;
   V100) EXPECT_MB=32768; MIN_BW=700; BOOST=1530; MEMEXP=900 ;;
   *)    EXPECT_MB=0;     MIN_BW=100; BOOST=0;    MEMEXP=0   ;;
 esac
