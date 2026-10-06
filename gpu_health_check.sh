@@ -236,7 +236,7 @@ stage_diag() {
             || dcgmi discovery -d -l 2>/dev/null | grep -i -F "$df)" | head -1)
   if [ -n "$devline" ]; then
     did=$(dcgmi discovery -d -l 2>/dev/null | awk -v line="$devline" '
-      { buf=$0 } buf ~ line {
+      { buf=$0 } buf == line {
         if ((getline nxt) > 0 && nxt ~ /Id:/) { gsub(/[^0-9]/, "", nxt); print nxt; exit }
       }')
   fi
