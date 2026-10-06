@@ -157,7 +157,11 @@ stage_info() {
   gen=$(echo "${gen:-?}" | tr -d ' '); width=$(echo "${width:-?}" | tr -d ' ')
   rec pcie_link "Gen${gen} x${width}"
   if [ "$width" = "16" ]; then
-    ok "PCIe: Gen${gen} x16"
+    if [ "$gen" = "1" ]; then
+      warn "PCIe: Gen${gen} x${width} — карта Gen3, линк деградировал до Gen1 — проверить слот/riser/коннектор"
+    else
+      ok "PCIe: Gen${gen} x${width}"
+    fi
   else
     warn "PCIe: Gen${gen} x${width} — ожидался x16, проверить слот/riser"
   fi
@@ -169,28 +173,51 @@ stage_info() {
     else
       dq="FAIL"; bad "deviceQuery упал — CUDA не видит карту"
     fi
+  else
+    dq="skipped"; warn "deviceQuery не установлен — пропуск"
   fi
   rec devicequery "$dq"
+}
+
+# sum_after_hdr <log> <regex-заголовков> — сумма всех "Total:" строк,
+# стоящих сразу после заголовков секций, совпавших по regex.
+# Возвращает: число | na (поле N/A) | 0 (заголовков не найдено) | none (нет Total)
+sum_after_hdr() {
+  awk -v hdr="$2" '
+    $0 ~ hdr { insec=1; next }
+    insec {
+      if ($0 ~ /Total:/) {
+        for (i=1; i<=NF; i++) if ($i ~ /^[0-9]+$/) { s+=$i; found=1 }
+        else if ($i ~ /^N\/A/) { found=1; na=1 }
+        insec=0
+      } else if ($0 ~ /^[A-Za-z]/) { insec=0 }
+    }
+    END { if (!found) print "none"; else if (na) print "na"; else print s+0 }' "$1"
 }
 
 stage_ecc() {
   echo; echo "== [2/5] ECC-память =="
   NSMI -q -d ECC > "$LOG_DIR/ecc.txt" 2>&1
+  # режим: "    ECC Mode" + "        Currently Active:    Enabled"
   local mode uncorr
-  mode=$(grep -Ei 'ECC Status' "$LOG_DIR/ecc.txt" | head -1 | awk -F: '{gsub(/ /,""); print $2}')
-  uncorr=$(grep -Ei 'Uncorrectable' "$LOG_DIR/ecc.txt" | grep -oE '[0-9]+' | awk '{s+=$1} END{print s+0}')
-  echo "  ECC mode: ${mode:-?} | uncorrectable (всего): $uncorr"
-  rec ecc_mode "${mode:-?}"; rec ecc_uncorr "$uncorr"
+  mode=$(awk '/[Ee][Cc][Cc] Mode/{f=1;next} /Currently Active:/{if(f){print $NF; exit}}' \
+          "$LOG_DIR/ecc.txt" | head -1 | tr -d ' ')
+  uncorr=$(sum_after_hdr "$LOG_DIR/ecc.txt" 'Uncorrectable')
+  case "$uncorr" in
+    na)   echo "  ECC mode: ${mode:-?} | uncorrectable: N/A (нет данных)"; rec ecc_mode "${mode:-?}"; rec ecc_uncorr "n/a" ;;
+    none) echo "  ECC mode: ${mode:-?} | uncorrectable: N/A (нет данных)"; rec ecc_mode "${mode:-?}"; rec ecc_uncorr "n/a" ;;
+    *)    echo "  ECC mode: ${mode:-?} | uncorrectable (всего): $uncorr"; rec ecc_mode "${mode:-?}"; rec ecc_uncorr "$uncorr" ;;
+  esac
   case "$mode" in
     Enabled)  ok "ECC включён" ;;
     Disabled) warn "ECC отключён (на Tesla должен быть Enabled)" ;;
-    *)        warn "Не распознано ECC — см. $LOG_DIR/ecc.txt" ;;
+    *)        warn "Не распознано ECC (или поле вырезано драйвером) — см. $LOG_DIR/ecc.txt" ;;
   esac
-  if [ "$uncorr" -gt 0 ]; then
-    bad "Есть uncorrectable ECC-ошибки — деградация памяти, RMA"
-  else
-    ok "Без uncorrectable ECC-ошибок"
-  fi
+  case "$uncorr" in
+    na|none) warn "Нет данных по uncorrectable ECC (N/A) — проверка памяти только через gpu-burn/dcgmi" ;;
+    0)       ok "Без uncorrectable ECC-ошибок" ;;
+    *)       bad "Есть uncorrectable ECC-ошибки ($uncorr) — деградация памяти, RMA" ;;
+  esac
 }
 
 stage_diag() {
@@ -198,12 +225,30 @@ stage_diag() {
   if ! command -v dcgmi >/dev/null 2>&1; then
     warn "dcgmi не установлен — пропуск"; rec dcgm "skipped"; return
   fi
-  local bus did res
+  local bus df did devline
   bus=$(NSMI --query-gpu=pci.bus_id --format=csv,noheader | head -1 | tr -d ' ')
-  dcgmi discovery -l > /dev/null 2>&1
-  did=$(dcgmi discovery -l 2>/dev/null | awk -v b="$bus" 'index($0,b) && $1 ~ /^[0-9]+\.$/{print $1; exit}')
-  [ -n "$did" ] || { bad "dcgmi не видит карту (bus $bus)"; rec dcgm "FAIL"; return; }
-  echo "  dcgmi device id: $did"
+  # Fallback для короткой формы (например "00:10.0") — достроить до полной:
+  if [ "${bus%%:*}" = "$bus" ]; then
+    bus="00000000:${bus}"
+  fi
+  df="${bus##*:}"                       # dev:func
+  devline=$(dcgmi discovery -d -l 2>/dev/null | grep -i -F "$bus" \
+            || dcgmi discovery -d -l 2>/dev/null | grep -i -F "$df)" | head -1)
+  if [ -n "$devline" ]; then
+    did=$(dcgmi discovery -d -l 2>/dev/null | awk -v line="$devline" '
+      { buf=$0 } buf ~ line {
+        if ((getline nxt) > 0 && nxt ~ /Id:/) { gsub(/[^0-9]/, "", nxt); print nxt; exit }
+      }')
+  fi
+  if [ -z "${did:-}" ]; then
+    # последняя надежда: единственная карта — берём первый ID
+    did=$(dcgmi discovery -d -l 2>/dev/null | awk '/Id:/{gsub(/[^0-9]/,"",$0); print; exit}')
+  fi
+  if [ -z "${did:-}" ]; then
+    bad "dcgmi не видит карту (bus $bus) — см. README §8 (версия DCGM / переустановка)"
+    rec dcgm "FAIL"; return
+  fi
+  echo "  dcgmi device id: $did (bus $bus)"
   dcgmi diag -i "$did" -r "$DCGM_LEVEL" -v 2>&1 | tee "$LOG_DIR/dcgmi_diag.txt"
   if   grep -q '\[FAIL\]' "$LOG_DIR/dcgmi_diag.txt"; then res="FAIL"
   elif grep -q '\[PASS\]' "$LOG_DIR/dcgmi_diag.txt"; then res="PASS"
@@ -220,7 +265,7 @@ stage_diag() {
 stage_bw() {
   echo; echo "== [4/5] Bandwidth =="
   if ! command -v bandwidthTest >/dev/null 2>&1; then
-    warn "bandwidthTest не установлен — пропуск"; rec d2d_bw "skipped"; return
+    warn "bandwidthTest не установлен — пропуск (install_deps.sh, нужен nvcc CUDA 12.x)"; rec d2d_bw "skipped"; return
   fi
   bandwidthTest 2>&1 | tee "$LOG_DIR/bandwidth.txt"
   local bw
@@ -245,24 +290,33 @@ stage_burn() {
   [ -f "$COMPARE_FATBIN" ] || warn "compare.fatbin не найден: $COMPARE_FATBIN (gpu-burn упадёт — см. README, Установка)"
 
   local procs
-  procs=$(NSMI --query-compute-apps=pid,process_name --format=csv 2>/dev/null | tail -1 | tr -d ' ')
+  procs=$(NSMI --query-compute-apps=pid,process_name --format=csv,noheader 2>/dev/null \
+          | sed 's/[[:space:]]*$//' | paste -sd '; ' -)
   [ -n "${procs:-}" ] && warn "На карте уже есть процессы: $procs — тест будет искажён, лучше остановить"
 
   : > "$LOG_DIR/monitor.csv"
   ( while :; do
-      NSMI --query-gpu=temperature.gpu,clocks.sm,power.draw --format=csv,noheader,nounits 2>/dev/null | tr '\n' ',' >> "$LOG_DIR/monitor.csv"
+      NSMI --query-gpu=temperature.gpu,clocks.sm,clocks.gr,power.draw \
+           --format=csv,noheader,nounits 2>/dev/null | tr '\n' ',' >> "$LOG_DIR/monitor.csv"
       echo >> "$LOG_DIR/monitor.csv"
       sleep 2
     done ) &
   local mon=$!
 
   gpu-burn -c "$COMPARE_FATBIN" "$BURN_SECONDS" 2>&1 | tee "$LOG_DIR/gpu_burn.txt"
+  local gbx=${PIPESTATUS[0]}
   kill "$mon" 2>/dev/null; wait "$mon" 2>/dev/null
 
-  local maxt maxc
+  # monitor.csv: temp,sm,gr,power
+  local maxt maxc maxg
   maxt=$(awk -F',' '$1 ~ /^[0-9]+$/ {print $1}' "$LOG_DIR/monitor.csv" | sort -n | tail -1)
   maxc=$(awk -F',' '$2 ~ /^[0-9]+$/ {print $2}' "$LOG_DIR/monitor.csv" | sort -n | tail -1)
-  maxt=${maxt:-0}; maxc=${maxc:-0}
+  maxg=$(awk -F',' '$3 ~ /^[0-9]+$/ {print $3}' "$LOG_DIR/monitor.csv" | sort -n | tail -1)
+  maxt=${maxt:-0}
+  if [ -n "${maxc:-}" ] && { [ -n "${maxg:-}" ] && [ "$maxg" -gt "$maxc" ]; }; then
+    maxc="$maxg"
+  fi
+  maxc=${maxc:-0}
   echo "  Макс. под нагрузкой: ${maxt}°C, SM ${maxc} MHz"
   rec max_temp "$maxt"; rec max_clock "$maxc"
 
@@ -270,16 +324,31 @@ stage_burn() {
   elif [ "$maxt" -ge 80 ]; then warn "Температура ${maxt}°C — повышена"
   else ok "Температура под нагрузкой: ${maxt}°C"
   fi
-  if [ "$BOOST" != "0" ] && [ "$maxc" -lt $((BOOST*60/100)) ]; then
+  if [ "$BOOST" = "0" ]; then
+    ok "SM clock под нагрузкой: ${maxc} MHz (номинал для карты не задан)"
+  elif [ "$maxc" -lt $((BOOST*60/100)) ]; then
     bad "SM clock ${maxc} MHz << номинал ~${BOOST} — троттлинг (питание/тепло)"
   else
     ok "SM clock под нагрузкой: ${maxc} MHz (номинал ~${BOOST})"
   fi
-  local tf
-  tf=$(grep -oE '[0-9]+\.[0-9]+[[:space:]]*TFLOPS' "$LOG_DIR/gpu_burn.txt" | tail -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+  if [ "$maxc" = "0" ]; then
+    warn "SM-частота не измерена (поле вырезано/недоступно) — выводы о троттлинге по частоте не сделаны"
+  fi
+
+  local tf gbx_rc
+  # gpu-burn печатает "(NNNN Gflop/s)" — пересчитать в TFLOPS
+  tf=$(grep -oE '\([0-9]+ Gflop/s\)' "$LOG_DIR/gpu_burn.txt" | tail -1 \
+       | grep -oE '[0-9]+' | awk '{printf "%.2f", $1/1000}')
   if [ -n "${tf:-}" ]; then echo "  gpu-burn: ${tf} TFLOPS"; rec tflops "$tf"; else rec tflops "unparsed"; fi
-  grep -q "All tests completed" "$LOG_DIR/gpu_burn.txt" \
-    && ok "gpu-burn завершился штатно" || bad "gpu-burn не завершился штатно"
+  # успех: exit code gpu-burn + отсутствие "FAILED" в итогах (в wilicc/gpu-burn
+  # строки "All tests completed" нет — её нельзя использовать как маркер)
+  if [ "$gbx" -ne 0 ]; then
+    bad "gpu-burn завершился с кодом $gbx — см. $LOG_DIR/gpu_burn.txt"
+  elif grep -q 'GPU [0-9]*: FAILED' "$LOG_DIR/gpu_burn.txt"; then
+    bad "gpu-burn: FAILED — см. $LOG_DIR/gpu_burn.txt"
+  else
+    ok "gpu-burn завершился штатно"
+  fi
 }
 
 stage_xid() {
