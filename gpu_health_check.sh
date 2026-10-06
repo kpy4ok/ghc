@@ -109,7 +109,11 @@ NSMI() { nvidia-smi -i "$GPU_IDX" "$@"; }
 
 GPU_NAME="$(NSMI --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
 [ -n "$GPU_NAME" ] || { echo "nvidia-smi не видит карту GPU_IDX=$GPU_IDX"; exit 2; }
-GPU_SHORT=$(echo "$GPU_NAME" | awk '{print $NF}')
+case "$GPU_NAME" in
+  *P40*) GPU_SHORT="P40" ;;
+  *V100*) GPU_SHORT="V100" ;;
+  *)     GPU_SHORT=$(echo "$GPU_NAME" | awk '{print $NF}') ;;
+esac
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="$RES_DIR/logs_${GPU_SHORT}_${RUN_ID}"
 RESULT_FILE="$RES_DIR/result_${GPU_SHORT}_${RUN_ID}.jsonl"
@@ -218,7 +222,7 @@ stage_bw() {
   fi
   bandwidthTest 2>&1 | tee "$LOG_DIR/bandwidth.txt"
   local bw
-  bw=$(grep -Eo 'D2D Bandwidth [0-9.]+ GB/s' "$LOG_DIR/bandwidth.txt" | grep -oE '^[0-9.]+ GB/s' | grep -oE '^[0-9.]+' | head -1)
+    bw=$(sed -n 's/.*D2D Bandwidth \([0-9.]*\) GB\/s.*/\1/p' "$LOG_DIR/bandwidth.txt" | head -1)
   if [ -n "${bw:-}" ]; then
     local bi=${bw%.*}
     echo "  D2D: ${bw} GB/s (порог ≥ ${MIN_BW}, номинал ~${MEMEXP})"
