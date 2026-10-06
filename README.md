@@ -59,7 +59,7 @@
 
 | # | Этап | Что делает | OK | FAIL / WARN |
 |---|---|---|---|---|
-| 1 | **Базовые параметры** | nvidia-smi: имя, память, PCIe-линк; `deviceQuery` | память ≥ номинала; PCIe x16 | меньше памяти → FAIL; PCIe < x16 → WARN (слот/riser) |
+| 1 | **Базовые параметры** | nvidia-smi: имя, память, PCIe-линк; `deviceQuery` | память ≥ номинала; PCIe x16 (Gen ≥ 2) | меньше памяти → FAIL; PCIe Gen1 или < x16 → WARN (слот/riser) |
 | 2 | **ECC** | `nvidia-smi -q -d ECC`: режим, uncorrectable (volatile+aggregate) | Enabled, 0 uncorrectable | uncorrectable > 0 → **RMA**; ECC Disabled → WARN |
 | 3 | **DCGM-диагностика** | `dcgmi diag -r 2/3` — аппаратная диагностика NVIDIA (память, SM, PCIe, питание) | `[PASS]` | `[FAIL]` → подробности в `dcgmi_diag.txt` |
 | 4 | **Bandwidth** | CUDA sample `bandwidthTest`, D2D-копирование | ≥ порога (P40: 300, V100: 700 GB/s) | ниже порога → **проблемы со слотом/riser/коннектором** |
