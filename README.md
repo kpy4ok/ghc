@@ -179,7 +179,7 @@ nvidia-smi --query-compute-apps=pid,process_name --format=csv   # кто сид�
 
 ---
 
-## 6. Resultados и файлы
+## 6. Результаты и файлы
 
 После каждого прогона в `$RES_DIR`:
 
