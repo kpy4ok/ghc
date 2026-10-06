@@ -75,7 +75,7 @@ generate_report() {
     echo "### Соотношения (правый столбец / левый)"
     echo
     echo "- D2D bandwidth: $(ratio "$(jval "$fA" d2d_bw)" "$(jval "$fB" d2d_bw)")  (ожидаемо ~2.3 — HBM2 vs GDDR5)"
-    echo "- TFLOPS: $(ratio "$(jval "$fA" tflops)" "$(jval "$fB" tflops)")  (ожидаемо ~1.8–2.2)"
+    echo "- TFLOPS: $(ratio "$(jval "$fA" tflops)" "$(jval "$fB" tflops)")  (ожидаемо ~1.1–1.3 — V100 выше, но метрика gpu-burn завышена у P40)"
     echo
     echo "> Значительно более низкое соотношение — проверь карту в правом столбце"
     echo "> (троттлинг, PCIe линк, слот/riser)."
