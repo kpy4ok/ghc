@@ -179,20 +179,22 @@ stage_info() {
   rec devicequery "$dq"
 }
 
-# sum_after_hdr <log> <regex-заголовков> — сумма всех "Total:" строк,
-# стоящих сразу после заголовков секций, совпавших по regex.
-# Возвращает: число | na (поле N/A) | 0 (заголовков не найдено) | none (нет Total)
-sum_after_hdr() {
-  awk -v hdr="$2" '
-    $0 ~ hdr { insec=1; next }
-    insec {
-      if ($0 ~ /Total:/) {
-        for (i=1; i<=NF; i++) if ($i ~ /^[0-9]+$/) { s+=$i; found=1 }
-        else if ($i ~ /^N\/A/) { found=1; na=1 }
-        insec=0
-      } else if ($0 ~ /^[A-Za-z]/) { insec=0 }
+# sum_uncorr <log> — сумма всех Total строк uncorrectable-секций.
+# Поддерживает обе формы nvidia-smi:
+#   - классическую:  *Correctable* / *Uncorrectable*
+#   - 580.x (Pascal): Volatile/Aggregate -> Single Bit / Double Bit
+# Возвращает: число | na (поле N/A) | none (секций не найдено)
+sum_uncorr() {
+  awk '
+    /[Uu]ncorrectable/ || /Double Bit/ { ctx="u"; seen=1; next }
+    /[Cc]orrectable/   || /Single Bit/ { ctx="c"; seen=1; next }
+    ctx=="u" && /Total[[:space:]]*:/ {
+      for (i=1; i<=NF; i++) {
+        if ($i ~ /^[0-9]+$/) u += $i
+        else if ($i ~ /^N\/A/) na=1
+      }
     }
-    END { if (!found) print "none"; else if (na) print "na"; else print s+0 }' "$1"
+    END { if (!seen) print "none"; else if (na) print "na"; else print u+0 }' "$1"
 }
 
 stage_ecc() {
