@@ -228,27 +228,38 @@ stage_diag() {
   if ! command -v dcgmi >/dev/null 2>&1; then
     warn "dcgmi не установлен — пропуск"; rec dcgm "skipped"; return
   fi
-  local bus df did devline
+  local bus df did devline ngpu
   bus=$(NSMI --query-gpu=pci.bus_id --format=csv,noheader | head -1 | tr -d ' ')
   # Fallback для короткой формы (например "00:10.0") — достроить до полной:
   if [ "${bus%%:*}" = "$bus" ]; then
     bus="00000000:${bus}"
   fi
   df="${bus##*:}"                       # dev:func
-  devline=$(dcgmi discovery -d -l 2>/dev/null | grep -i -F "$bus" \
-            || dcgmi discovery -d -l 2>/dev/null | grep -i -F "$df)" | head -1)
+  # сырой вывод discovery — в лог, чтобы на FAIL можно было диагностировать
+  dcgmi discovery -d -l > "$LOG_DIR/dcgmi_discovery.txt" 2>&1
+  devline=$(grep -i -F "$bus" "$LOG_DIR/dcgmi_discovery.txt" \
+            || grep -i -F "$df)" "$LOG_DIR/dcgmi_discovery.txt" | head -1)
   if [ -n "$devline" ]; then
-    did=$(dcgmi discovery -d -l 2>/dev/null | awk -v line="$devline" '
+    did=$(awk -v line="$devline" '
       { buf=$0 } buf == line {
         if ((getline nxt) > 0 && nxt ~ /Id:/) { gsub(/[^0-9]/, "", nxt); print nxt; exit }
-      }')
+      }' "$LOG_DIR/dcgmi_discovery.txt")
   fi
   if [ -z "${did:-}" ]; then
-    # последняя надежда: единственная карта — берём первый ID
-    did=$(dcgmi discovery -d -l 2>/dev/null | awk '/Id:/{gsub(/[^0-9]/,"",$0); print; exit}')
+    # единственная карта в discovery — берём её ID (безопасно только при 1 карте)
+    ngpu=$(grep -c 'Id:' "$LOG_DIR/dcgmi_discovery.txt" 2>/dev/null)
+    if [ "${ngpu:-0}" = "1" ]; then
+      did=$(awk '/Id:/{gsub(/[^0-9]/,"",$0); print; exit}' "$LOG_DIR/dcgmi_discovery.txt")
+    fi
   fi
   if [ -z "${did:-}" ]; then
-    bad "dcgmi не видит карту (bus $bus) — см. README §8 (версия DCGM / переустановка)"
+    echo "  --- dcgmi discovery -d -l (сырой вывод) ---"
+    sed 's/^/    /' "$LOG_DIR/dcgmi_discovery.txt"
+    if [ "$(id -u)" != "0" ]; then
+      bad "dcgmi не видит карту (bus $bus) — запущен без sudo; проверь вручную: sudo dcgmi discovery -d -l"
+    else
+      bad "dcgmi не видит карту (bus $bus) — DCGM несовместим с драйвером? переустановка — см. README §8"
+    fi
     rec dcgm "FAIL"; return
   fi
   echo "  dcgmi device id: $did (bus $bus)"
