@@ -39,7 +39,7 @@
 | D2D bandwidth (test) | 340–380 GB/s | 830–900 GB/s |
 | FP32 (пик) | ~6.8 TFLOPS | ~15.7 TFLOPS |
 | SM boost clock | 1720 MHz | 1530 MHz |
-| GPU-burn, «Gflop/s» | ~4500–5500* | ~9500–11000* |
+| GPU-burn | ~8000–9000* | ~9500–11000* |
 | Потребление (номинал) | 250 W | 250–300 W |
 | PCIe | Gen3 x16 | Gen3 x16 |
 | Tensor-ядра | нет | есть |
@@ -48,7 +48,7 @@
 поэтому значения могут быть выше пиковых TFLOPS карты — это особенность метрики,
 важно сравнивать **карту с собой во времени** и **карту с картой**, а не с даташитом.
 
-> **Ожидаемые соотношения (V100 / P40)**: D2D bandwidth ≈ 2.3, gpu-burn ≈ 1.8–2.2.
+> **Ожидаемые соотношения (V100 / P40)**: D2D bandwidth ≈ 2.3, gpu-burn ≈ 1.1–1.3.
 > Значительно меньший разрыв — повод проверить карту в правом столбце отчёта.
 
 ---
@@ -122,7 +122,7 @@ sudo ./install_deps.sh
 ```bash
 deviceQuery -c 0        # видит карту
 bandwidthTest           # печатает таблицу с D2D Bandwidth
-gpu-burn -c /usr/local/share/gpu-burn/compare.fatbin 10   # таблица Gflop/s + "All tests completed"
+gpu-burn -c /usr/local/share/gpu-burn/compare.fatbin 10   # таблица (Gflop/s) + "GPU 0: OK"
 ```
 
 ---
@@ -226,8 +226,8 @@ gpu_results/
 | Память | ≥ 23040 MB | ≥ 32768 MB | меньше — карта «урезана»/подмена |
 | PCIe | Gen3 x16 | Gen3 x16 | < x16 → riser/слот/коннектор |
 | ECC uncorrectable | 0 | 0 | > 0 → **RMA** |
-| D2D bandwidth | 340–380 GB/s | 830–900 GB/s | << порог (300/700) → PCIe/слот |
-| gpu-burn | ~4500–5500 | ~9500–11000 | ниже на 20%+ → троттлинг/б/у деградация |
+| D2D bandwidth | 340–380 GB/s | 830–900 GB/s | << порог (300/700) → PCIe/слот. На **Gen1** P40 будет ~200–250 → FAIL — это деградация линка, а не карты |
+| gpu-burn | ~8000–9000 | ~9500–11000 | ниже на 20%+ → троттлинг/б/у деградация |
 | Температура (обдув) | < 80°C | < 80°C | ≥ 90°C → обдув/термоинтерфейс |
 | SM clock под нагрузкой | ~1720 MHz (мин. 60% = 1030) | ~1530 MHz (мин. 60% = 920) | << номинал → тепло/питание |
 | Драйвер | 580.x | 580.x | см. §3 |
@@ -253,9 +253,11 @@ gpu_results/
 | `No clients are alive! Aborting` без других ошибок | gpu-burn упал на init — см. `named symbol not found` выше | — |
 | `Initialized device 0 … (1147 MB available)` — свободной памяти мало | на карте сидит другой процесс | `nvidia-smi --query-compute-apps=...`, остановить; тесты искажаются |
 | `dcgmi` не видит карту («dcgmi не видит карту (bus …)») | (а) DCGM несовместим с версией драйвера/не перезапущен; (б) bus-id карты не отображается в discovery | руками: `sudo dcgmi discovery -d -l` — карта в списке с `Id:`? Если нет: `sudo apt-get install --reinstall datacenter-gpu-manager`, при необходимости выбрать ветку DCGM под драйвер. Если да — id выводится скриптом по строке GPU |
+| `dcgmi diag` стартует, но сразу падает/не видит GPU (apt-DCGM + новый драйвер) | ветка DCGM из apt не покрывает мажор драйвера (у вас: 580.x) | посмотреть `dcgmi --version` и версию DCGM в репозитории; если несовместимо — собрать DCGM под ветку драйвера или отложить этап diag (остальные этапы не зависят от него) |
+| D2D bandwidth ~200–250 GB/s на P40, всё остальное в норме | PCIe-линк деградировал до Gen1 (номинал Gen3 x16 даёт 340–380) | `nvidia-smi -q -d PCIe` (Max Link Width), переставить в другой слот/riser, проверить коннектор — карта не виновата |
 | Скрипт пишет «На карте уже есть процессы: pid,process_name», хотя nvidia-smi пуст | ложный триггер на заголовок CSV (исправлено в fix/stages-parsing) | запрос `--query-compute-apps` теперь с `--format=csv,noheader`; при новом коде предупреждение появляется только при реальных процессах |
 | `SM clock 0 MHz` в отчёте burn | поле `clocks.sm` отдаёт `N/A` (частично вырезано в 580.x на Pascal) | не троттлинг: скрипт берёт fallback `clocks.gr`, а при нуле — WARN «частота не измерена», не FAIL |
-| ECC: режим `?`, `uncorrectable: N/A` | драйвер 580.x вырезал часть ECC-полей на Pascal (P40) | WARN «нет данных» — норма; контроль памяти тогда — через счётчик ошибок gpu-burn и dcgmi diag |
+| ECC: режим `?`, `uncorrectable: N/A` | форма вывода `-q -d ECC` отличается от обеих известных (parser понимает 580.x: `Current` + `Single Bit`/`Double Bit`, и классическую) | посмотреть `logs_*/ecc.txt` руками; секции есть — расширить `sum_uncorr` под новую форму |
 | `nvidia-smi не видит карту` | карта не инициализирована (после reset/BIOS) | перезагрузка, перестановка, `dmesg | grep -i nvidia` |
 | `bandwidthTest`/`deviceQuery` не нашлись | шаг 2 install_deps пропущен (нет nvcc) | установить CUDA 12.x toolkit, повторить `install_deps.sh` |
 

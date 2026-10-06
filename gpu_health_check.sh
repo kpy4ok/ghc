@@ -75,7 +75,7 @@ generate_report() {
     echo "### Соотношения (правый столбец / левый)"
     echo
     echo "- D2D bandwidth: $(ratio "$(jval "$fA" d2d_bw)" "$(jval "$fB" d2d_bw)")  (ожидаемо ~2.3 — HBM2 vs GDDR5)"
-    echo "- TFLOPS: $(ratio "$(jval "$fA" tflops)" "$(jval "$fB" tflops)")  (ожидаемо ~1.8–2.2)"
+    echo "- TFLOPS: $(ratio "$(jval "$fA" tflops)" "$(jval "$fB" tflops)")  (ожидаемо ~1.1–1.3 — V100 выше, но метрика gpu-burn завышена у P40)"
     echo
     echo "> Значительно более низкое соотношение — проверь карту в правом столбце"
     echo "> (троттлинг, PCIe линк, слот/riser)."
@@ -179,30 +179,33 @@ stage_info() {
   rec devicequery "$dq"
 }
 
-# sum_after_hdr <log> <regex-заголовков> — сумма всех "Total:" строк,
-# стоящих сразу после заголовков секций, совпавших по regex.
-# Возвращает: число | na (поле N/A) | 0 (заголовков не найдено) | none (нет Total)
-sum_after_hdr() {
-  awk -v hdr="$2" '
-    $0 ~ hdr { insec=1; next }
-    insec {
-      if ($0 ~ /Total:/) {
-        for (i=1; i<=NF; i++) if ($i ~ /^[0-9]+$/) { s+=$i; found=1 }
-        else if ($i ~ /^N\/A/) { found=1; na=1 }
-        insec=0
-      } else if ($0 ~ /^[A-Za-z]/) { insec=0 }
+# sum_uncorr <log> — сумма всех Total строк uncorrectable-секций.
+# Поддерживает обе формы nvidia-smi:
+#   - классическую:  *Correctable* / *Uncorrectable*
+#   - 580.x (Pascal): Volatile/Aggregate -> Single Bit / Double Bit
+# Возвращает: число | na (поле N/A) | none (секций не найдено)
+sum_uncorr() {
+  awk '
+    /[Uu]ncorrectable/ || /Double Bit/ { ctx="u"; seen=1; next }
+    /[Cc]orrectable/   || /Single Bit/ { ctx="c"; seen=1; next }
+    ctx=="u" && /Total[[:space:]]*:/ {
+      for (i=1; i<=NF; i++) {
+        if ($i ~ /^[0-9]+$/) u += $i
+        else if ($i ~ /^N\/A/) na=1
+      }
     }
-    END { if (!found) print "none"; else if (na) print "na"; else print s+0 }' "$1"
+    END { if (!seen) print "none"; else if (na) print "na"; else print u+0 }' "$1"
 }
 
 stage_ecc() {
   echo; echo "== [2/5] ECC-память =="
   NSMI -q -d ECC > "$LOG_DIR/ecc.txt" 2>&1
-  # режим: "    ECC Mode" + "        Currently Active:    Enabled"
+  # режим: "    ECC Mode" + "        Current: Enabled" (в 580.x — "Current",
+  # в старых версиях — "Currently Active")
   local mode uncorr
-  mode=$(awk '/[Ee][Cc][Cc] Mode/{f=1;next} /Currently Active:/{if(f){print $NF; exit}}' \
+  mode=$(awk '/[Ee][Cc][Cc] Mode/{f=1;next} f && /Current/{print $NF; exit}' \
           "$LOG_DIR/ecc.txt" | head -1 | tr -d ' ')
-  uncorr=$(sum_after_hdr "$LOG_DIR/ecc.txt" 'Uncorrectable')
+  uncorr=$(sum_uncorr "$LOG_DIR/ecc.txt")
   case "$uncorr" in
     na)   echo "  ECC mode: ${mode:-?} | uncorrectable: N/A (нет данных)"; rec ecc_mode "${mode:-?}"; rec ecc_uncorr "n/a" ;;
     none) echo "  ECC mode: ${mode:-?} | uncorrectable: N/A (нет данных)"; rec ecc_mode "${mode:-?}"; rec ecc_uncorr "n/a" ;;
@@ -225,27 +228,38 @@ stage_diag() {
   if ! command -v dcgmi >/dev/null 2>&1; then
     warn "dcgmi не установлен — пропуск"; rec dcgm "skipped"; return
   fi
-  local bus df did devline
+  local bus df did devline ngpu
   bus=$(NSMI --query-gpu=pci.bus_id --format=csv,noheader | head -1 | tr -d ' ')
   # Fallback для короткой формы (например "00:10.0") — достроить до полной:
   if [ "${bus%%:*}" = "$bus" ]; then
     bus="00000000:${bus}"
   fi
   df="${bus##*:}"                       # dev:func
-  devline=$(dcgmi discovery -d -l 2>/dev/null | grep -i -F "$bus" \
-            || dcgmi discovery -d -l 2>/dev/null | grep -i -F "$df)" | head -1)
+  # сырой вывод discovery — в лог, чтобы на FAIL можно было диагностировать
+  dcgmi discovery -d -l > "$LOG_DIR/dcgmi_discovery.txt" 2>&1
+  devline=$(grep -i -F "$bus" "$LOG_DIR/dcgmi_discovery.txt" \
+            || grep -i -F "$df)" "$LOG_DIR/dcgmi_discovery.txt" | head -1)
   if [ -n "$devline" ]; then
-    did=$(dcgmi discovery -d -l 2>/dev/null | awk -v line="$devline" '
+    did=$(awk -v line="$devline" '
       { buf=$0 } buf == line {
         if ((getline nxt) > 0 && nxt ~ /Id:/) { gsub(/[^0-9]/, "", nxt); print nxt; exit }
-      }')
+      }' "$LOG_DIR/dcgmi_discovery.txt")
   fi
   if [ -z "${did:-}" ]; then
-    # последняя надежда: единственная карта — берём первый ID
-    did=$(dcgmi discovery -d -l 2>/dev/null | awk '/Id:/{gsub(/[^0-9]/,"",$0); print; exit}')
+    # единственная карта в discovery — берём её ID (безопасно только при 1 карте)
+    ngpu=$(grep -c 'Id:' "$LOG_DIR/dcgmi_discovery.txt" 2>/dev/null)
+    if [ "${ngpu:-0}" = "1" ]; then
+      did=$(awk '/Id:/{gsub(/[^0-9]/,"",$0); print; exit}' "$LOG_DIR/dcgmi_discovery.txt")
+    fi
   fi
   if [ -z "${did:-}" ]; then
-    bad "dcgmi не видит карту (bus $bus) — см. README §8 (версия DCGM / переустановка)"
+    echo "  --- dcgmi discovery -d -l (сырой вывод) ---"
+    sed 's/^/    /' "$LOG_DIR/dcgmi_discovery.txt"
+    if [ "$(id -u)" != "0" ]; then
+      bad "dcgmi не видит карту (bus $bus) — запущен без sudo; проверь вручную: sudo dcgmi discovery -d -l"
+    else
+      bad "dcgmi не видит карту (bus $bus) — DCGM несовместим с драйвером? переустановка — см. README §8"
+    fi
     rec dcgm "FAIL"; return
   fi
   echo "  dcgmi device id: $did (bus $bus)"
@@ -270,6 +284,12 @@ stage_bw() {
   bandwidthTest 2>&1 | tee "$LOG_DIR/bandwidth.txt"
   local bw
   bw=$(sed -n 's/.*D2D Bandwidth \([0-9.]*\) GB\/s.*/\1/p' "$LOG_DIR/bandwidth.txt" | head -1)
+  if [ -z "${bw:-}" ]; then
+    # новый формат cuda-samples (v12.x): таблица "Device to Device Bandwidth",
+    # итоговой строки "D2D Bandwidth: NN GB/s" нет
+    bw=$(awk '/Device to Device Bandwidth/{f=1;next}
+             f && $NF ~ /^[0-9]+(\.[0-9]+)?$/ {print $NF}' "$LOG_DIR/bandwidth.txt" | tail -1)
+  fi
   if [ -n "${bw:-}" ]; then
     local bi=${bw%.*}
     echo "  D2D: ${bw} GB/s (порог ≥ ${MIN_BW}, номинал ~${MEMEXP})"
@@ -324,15 +344,14 @@ stage_burn() {
   elif [ "$maxt" -ge 80 ]; then warn "Температура ${maxt}°C — повышена"
   else ok "Температура под нагрузкой: ${maxt}°C"
   fi
-  if [ "$BOOST" = "0" ]; then
+  if [ "$maxc" = "0" ]; then
+    warn "SM-частота не измерена (поле вырезано/недоступно) — троттлинг по частоте не проверялся"
+  elif [ "$BOOST" = "0" ]; then
     ok "SM clock под нагрузкой: ${maxc} MHz (номинал для карты не задан)"
   elif [ "$maxc" -lt $((BOOST*60/100)) ]; then
     bad "SM clock ${maxc} MHz << номинал ~${BOOST} — троттлинг (питание/тепло)"
   else
     ok "SM clock под нагрузкой: ${maxc} MHz (номинал ~${BOOST})"
-  fi
-  if [ "$maxc" = "0" ]; then
-    warn "SM-частота не измерена (поле вырезано/недоступно) — выводы о троттлинге по частоте не сделаны"
   fi
 
   local tf gbx_rc
