@@ -257,7 +257,7 @@ gpu_results/
 | D2D bandwidth ~200–250 GB/s на P40, всё остальное в норме | PCIe-линк деградировал до Gen1 (номинал Gen3 x16 даёт 340–380) | `nvidia-smi -q -d PCIe` (Max Link Width), переставить в другой слот/riser, проверить коннектор — карта не виновата |
 | Скрипт пишет «На карте уже есть процессы: pid,process_name», хотя nvidia-smi пуст | ложный триггер на заголовок CSV (исправлено в fix/stages-parsing) | запрос `--query-compute-apps` теперь с `--format=csv,noheader`; при новом коде предупреждение появляется только при реальных процессах |
 | `SM clock 0 MHz` в отчёте burn | поле `clocks.sm` отдаёт `N/A` (частично вырезано в 580.x на Pascal) | не троттлинг: скрипт берёт fallback `clocks.gr`, а при нуле — WARN «частота не измерена», не FAIL |
-| ECC: режим `?`, `uncorrectable: N/A` | драйвер 580.x вырезал часть ECC-полей на Pascal (P40) | WARN «нет данных» — норма; контроль памяти тогда — через счётчик ошибок gpu-burn и dcgmi diag |
+| ECC: режим `?`, `uncorrectable: N/A` | форма вывода `-q -d ECC` отличается от обеих известных (parser понимает 580.x: `Current` + `Single Bit`/`Double Bit`, и классическую) | посмотреть `logs_*/ecc.txt` руками; секции есть — расширить `sum_uncorr` под новую форму |
 | `nvidia-smi не видит карту` | карта не инициализирована (после reset/BIOS) | перезагрузка, перестановка, `dmesg | grep -i nvidia` |
 | `bandwidthTest`/`deviceQuery` не нашлись | шаг 2 install_deps пропущен (нет nvcc) | установить CUDA 12.x toolkit, повторить `install_deps.sh` |
 
