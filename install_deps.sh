@@ -31,6 +31,8 @@ git clone --depth 1 https://github.com/wilicc/gpu-burn /tmp/gpu-burn
 (cd /tmp/gpu-burn && make)
 (cd /tmp/gpu-burn && nvcc -O3 -fatbin compare.cu -o compare.fatbin \
    -gencode arch=compute_61,code=sm_61 -gencode arch=compute_70,code=sm_70)
-install -m755 /tmp/gpu-burn/gpu_burn /usr/local/bin/gpu-burn
+sudo install -m755 /tmp/gpu-burn/gpu_burn /usr/local/bin/gpu-burn
+sudo mkdir -p /usr/local/share/gpu-burn
+sudo install -m644 /tmp/gpu-burn/compare.fatbin /usr/local/share/gpu-burn/
 
 echo; echo "Готово. Далее: ./gpu_health_check.sh"
