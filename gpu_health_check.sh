@@ -200,11 +200,12 @@ sum_uncorr() {
 stage_ecc() {
   echo; echo "== [2/5] ECC-память =="
   NSMI -q -d ECC > "$LOG_DIR/ecc.txt" 2>&1
-  # режим: "    ECC Mode" + "        Currently Active:    Enabled"
+  # режим: "    ECC Mode" + "        Current: Enabled" (в 580.x — "Current",
+  # в старых версиях — "Currently Active")
   local mode uncorr
-  mode=$(awk '/[Ee][Cc][Cc] Mode/{f=1;next} /Currently Active:/{if(f){print $NF; exit}}' \
+  mode=$(awk '/[Ee][Cc][Cc] Mode/{f=1;next} f && /Current/{print $NF; exit}' \
           "$LOG_DIR/ecc.txt" | head -1 | tr -d ' ')
-  uncorr=$(sum_after_hdr "$LOG_DIR/ecc.txt" 'Uncorrectable')
+  uncorr=$(sum_uncorr "$LOG_DIR/ecc.txt")
   case "$uncorr" in
     na)   echo "  ECC mode: ${mode:-?} | uncorrectable: N/A (нет данных)"; rec ecc_mode "${mode:-?}"; rec ecc_uncorr "n/a" ;;
     none) echo "  ECC mode: ${mode:-?} | uncorrectable: N/A (нет данных)"; rec ecc_mode "${mode:-?}"; rec ecc_uncorr "n/a" ;;
