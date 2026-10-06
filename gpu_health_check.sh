@@ -333,15 +333,14 @@ stage_burn() {
   elif [ "$maxt" -ge 80 ]; then warn "Температура ${maxt}°C — повышена"
   else ok "Температура под нагрузкой: ${maxt}°C"
   fi
-  if [ "$BOOST" = "0" ]; then
+  if [ "$maxc" = "0" ]; then
+    warn "SM-частота не измерена (поле вырезано/недоступно) — троттлинг по частоте не проверялся"
+  elif [ "$BOOST" = "0" ]; then
     ok "SM clock под нагрузкой: ${maxc} MHz (номинал для карты не задан)"
   elif [ "$maxc" -lt $((BOOST*60/100)) ]; then
     bad "SM clock ${maxc} MHz << номинал ~${BOOST} — троттлинг (питание/тепло)"
   else
     ok "SM clock под нагрузкой: ${maxc} MHz (номинал ~${BOOST})"
-  fi
-  if [ "$maxc" = "0" ]; then
-    warn "SM-частота не измерена (поле вырезано/недоступно) — выводы о троттлинге по частоте не сделаны"
   fi
 
   local tf gbx_rc
