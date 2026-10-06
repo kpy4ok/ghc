@@ -63,7 +63,7 @@
 | 2 | **ECC** | `nvidia-smi -q -d ECC`: режим, uncorrectable (volatile+aggregate) | Enabled, 0 uncorrectable | uncorrectable > 0 → **RMA**; ECC Disabled → WARN; N/A (580.x, Pascal) → WARN |
 | 3 | **DCGM-диагностика** | `dcgmi diag -r 2/3` — аппаратная диагностика NVIDIA (память, SM, PCIe, питание) | `[PASS]` | `[FAIL]` → подробности в `dcgmi_diag.txt` |
 | 4 | **Bandwidth** | CUDA sample `bandwidthTest`, D2D-копирование | ≥ порога (P40: 300, V100: 700 GB/s) | ниже порога → **проблемы со слотом/riser/коннектором** |
-| 5 | **gpu-burn** | GEMM-нагрузка + параллельный мониторинг temp/clock/power каждые 2 с | temp < 80°C; SM clock ≥ 60% номинала; «All tests completed» | ≥ 90°C → FAIL; частота << номинала → троттлинг (тепло/питание) |
+| 5 | **gpu-burn** | GEMM-нагрузка + параллельный мониторинг temp/SM-частоты/power каждые 2 с | temp < 80°C; SM clock ≥ 60% номинала; exit 0 и без «FAILED» | ≥ 90°C → FAIL; частота << номинала → троттлинг (тепло/питание); частота не читается (N/A) → WARN |
 | — | **XID** | поиск `Xid` в `dmesg` | нет записей | Xid 48/63/64 → деградация памяти (RMA), 79 → fallback-ошибки |
 
 Пороги «слабой» проверки: `BURN_SECONDS` (длительность нагрузки), `DCGM_LEVEL`
