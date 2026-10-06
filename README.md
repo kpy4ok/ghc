@@ -179,7 +179,7 @@ nvidia-smi --query-compute-apps=pid,process_name --format=csv   # кто сид�
 
 ---
 
-## 6. Результаты и файлы
+## 6. Resultados и файлы
 
 После каждого прогона в `$RES_DIR`:
 
@@ -252,7 +252,7 @@ gpu_results/
 | Xid 79 | GPU fell back to slower mode (частичная смерть памяти/ядер) | RMA / замена |
 | `No clients are alive! Aborting` без других ошибок | gpu-burn упал на init — см. `named symbol not found` выше | — |
 | `Initialized device 0 … (1147 MB available)` — свободной памяти мало | на карте сидит другой процесс | `nvidia-smi --query-compute-apps=...`, остановить; тесты искажаются |
-| `dcgmi diag` не видит карту | DCGM не перезапущен после смены драйвера | `sudo dcgmi discovery -l` в логе;必要时 переустановить DCGM |
+| `dcgmi diag` не видит карту | DCGM не перезапущен после смены драйвера | `sudo dcgmi discovery -l` — карта в списке?; если нет — переустановить DCGM |
 | `nvidia-smi не видит карту` | карта не инициализирована (после reset/BIOS) | перезагрузка, перестановка, `dmesg | grep -i nvidia` |
 | `bandwidthTest`/`deviceQuery` не нашлись | шаг 2 install_deps пропущен (нет nvcc) | установить CUDA 12.x toolkit, повторить `install_deps.sh` |
 
