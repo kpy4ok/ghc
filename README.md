@@ -122,7 +122,7 @@ sudo ./install_deps.sh
 ```bash
 deviceQuery -c 0        # видит карту
 bandwidthTest           # печатает таблицу с D2D Bandwidth
-gpu-burn -c /usr/local/share/gpu-burn/compare.fatbin 10   # таблица Gflop/s + "All tests completed"
+gpu-burn -c /usr/local/share/gpu-burn/compare.fatbin 10   # таблица (Gflop/s) + "GPU 0: OK"
 ```
 
 ---
