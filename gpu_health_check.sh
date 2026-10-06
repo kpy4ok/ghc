@@ -270,6 +270,12 @@ stage_bw() {
   bandwidthTest 2>&1 | tee "$LOG_DIR/bandwidth.txt"
   local bw
   bw=$(sed -n 's/.*D2D Bandwidth \([0-9.]*\) GB\/s.*/\1/p' "$LOG_DIR/bandwidth.txt" | head -1)
+  if [ -z "${bw:-}" ]; then
+    # новый формат cuda-samples (v12.x): таблица "Device to Device Bandwidth",
+    # итоговой строки "D2D Bandwidth: NN GB/s" нет
+    bw=$(awk '/Device to Device Bandwidth/{f=1;next}
+             f && $NF ~ /^[0-9]+(\.[0-9]+)?$/ {print $NF}' "$LOG_DIR/bandwidth.txt" | tail -1)
+  fi
   if [ -n "${bw:-}" ]; then
     local bi=${bw%.*}
     echo "  D2D: ${bw} GB/s (порог ≥ ${MIN_BW}, номинал ~${MEMEXP})"
