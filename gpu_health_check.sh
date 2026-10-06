@@ -24,6 +24,7 @@ MODE="${1:-all}"
 GPU_IDX="${GPU_IDX:-0}"
 BURN_SECONDS="${BURN_SECONDS:-120}"
 DCGM_LEVEL="${DCGM_LEVEL:-2}"
+COMPARE_FATBIN="${COMPARE_FATBIN:-/usr/local/share/gpu-burn/compare.fatbin}"
 RES_DIR="${RES_DIR:-./gpu_results}"
 mkdir -p "$RES_DIR"
 
@@ -253,7 +254,7 @@ stage_burn() {
     done ) &
   local mon=$!
 
-  gpu-burn "$BURN_SECONDS" 2>&1 | tee "$LOG_DIR/gpu_burn.txt"
+  gpu-burn -c "$COMPARE_FATBIN" "$BURN_SECONDS" 2>&1 | tee "$LOG_DIR/gpu_burn.txt"
   kill "$mon" 2>/dev/null; wait "$mon" 2>/dev/null
 
   local maxt maxc
