@@ -12,6 +12,7 @@
 #
 # Переменные окружения:
 #   GPU_IDX=0 / BURN_SECONDS=120 / DCGM_LEVEL=2 / RES_DIR=./gpu_results
+#   COMPARE_FATBIN=/usr/local/share/gpu-burn/compare.fatbin
 #
 # Сравнение:
 #   - каждый прогон пишет метрики в $RES_DIR/result_<P40|V100>_<ts>.jsonl
@@ -24,8 +25,8 @@ MODE="${1:-all}"
 GPU_IDX="${GPU_IDX:-0}"
 BURN_SECONDS="${BURN_SECONDS:-120}"
 DCGM_LEVEL="${DCGM_LEVEL:-2}"
-COMPARE_FATBIN="${COMPARE_FATBIN:-/usr/local/share/gpu-burn/compare.fatbin}"
 RES_DIR="${RES_DIR:-./gpu_results}"
+COMPARE_FATBIN="${COMPARE_FATBIN:-/usr/local/share/gpu-burn/compare.fatbin}"
 mkdir -p "$RES_DIR"
 
 # ---------- утилиты результатов ----------
@@ -223,7 +224,7 @@ stage_bw() {
   fi
   bandwidthTest 2>&1 | tee "$LOG_DIR/bandwidth.txt"
   local bw
-    bw=$(sed -n 's/.*D2D Bandwidth \([0-9.]*\) GB\/s.*/\1/p' "$LOG_DIR/bandwidth.txt" | head -1)
+  bw=$(sed -n 's/.*D2D Bandwidth \([0-9.]*\) GB\/s.*/\1/p' "$LOG_DIR/bandwidth.txt" | head -1)
   if [ -n "${bw:-}" ]; then
     local bi=${bw%.*}
     echo "  D2D: ${bw} GB/s (порог ≥ ${MIN_BW}, номинал ~${MEMEXP})"
@@ -241,11 +242,12 @@ stage_burn() {
     rec tflops "skipped"; rec max_temp "skipped"; rec max_clock "skipped"
     return
   fi
-   
+  [ -f "$COMPARE_FATBIN" ] || warn "compare.fatbin не найден: $COMPARE_FATBIN (gpu-burn упадёт — см. README, Установка)"
+
   local procs
   procs=$(NSMI --query-compute-apps=pid,process_name --format=csv 2>/dev/null | tail -1 | tr -d ' ')
   [ -n "${procs:-}" ] && warn "На карте уже есть процессы: $procs — тест будет искажён, лучше остановить"
- 
+
   : > "$LOG_DIR/monitor.csv"
   ( while :; do
       NSMI --query-gpu=temperature.gpu,clocks.sm,power.draw --format=csv,noheader,nounits 2>/dev/null | tr '\n' ',' >> "$LOG_DIR/monitor.csv"
