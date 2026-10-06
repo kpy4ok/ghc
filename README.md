@@ -252,7 +252,10 @@ gpu_results/
 | Xid 79 | GPU fell back to slower mode (частичная смерть памяти/ядер) | RMA / замена |
 | `No clients are alive! Aborting` без других ошибок | gpu-burn упал на init — см. `named symbol not found` выше | — |
 | `Initialized device 0 … (1147 MB available)` — свободной памяти мало | на карте сидит другой процесс | `nvidia-smi --query-compute-apps=...`, остановить; тесты искажаются |
-| `dcgmi diag` не видит карту | DCGM не перезапущен после смены драйвера | `sudo dcgmi discovery -l` — карта в списке?; если нет — переустановить DCGM |
+| `dcgmi` не видит карту («dcgmi не видит карту (bus …)») | (а) DCGM несовместим с версией драйвера/не перезапущен; (б) bus-id карты не отображается в discovery | руками: `sudo dcgmi discovery -d -l` — карта в списке с `Id:`? Если нет: `sudo apt-get install --reinstall datacenter-gpu-manager`, при необходимости выбрать ветку DCGM под драйвер. Если да — id выводится скриптом по строке GPU |
+| Скрипт пишет «На карте уже есть процессы: pid,process_name», хотя nvidia-smi пуст | ложный триггер на заголовок CSV (исправлено в fix/stages-parsing) | запрос `--query-compute-apps` теперь с `--format=csv,noheader`; при новом коде предупреждение появляется только при реальных процессах |
+| `SM clock 0 MHz` в отчёте burn | поле `clocks.sm` отдаёт `N/A` (частично вырезано в 580.x на Pascal) | не троттлинг: скрипт берёт fallback `clocks.gr`, а при нуле — WARN «частота не измерена», не FAIL |
+| ECC: режим `?`, `uncorrectable: N/A` | драйвер 580.x вырезал часть ECC-полей на Pascal (P40) | WARN «нет данных» — норма; контроль памяти тогда — через счётчик ошибок gpu-burn и dcgmi diag |
 | `nvidia-smi не видит карту` | карта не инициализирована (после reset/BIOS) | перезагрузка, перестановка, `dmesg | grep -i nvidia` |
 | `bandwidthTest`/`deviceQuery` не нашлись | шаг 2 install_deps пропущен (нет nvcc) | установить CUDA 12.x toolkit, повторить `install_deps.sh` |
 
