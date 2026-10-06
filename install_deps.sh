@@ -29,7 +29,6 @@ echo "== 3/3 gpu-burn  Stress test=="
 rm -rf /tmp/gpu-burn
 git clone --depth 1 https://github.com/wilicc/gpu-burn /tmp/gpu-burn
 (cd /tmp/gpu-burn && make)
-# Makefile по умолчанию шьёт fatbin под compute_75 [1] — перешить под Pascal+Volta:
 (cd /tmp/gpu-burn && nvcc -O3 -fatbin compare.cu -o compare.fatbin \
    -gencode arch=compute_61,code=sm_61 -gencode arch=compute_70,code=sm_70)
 install -m755 /tmp/gpu-burn/gpu_burn /usr/local/bin/gpu-burn
